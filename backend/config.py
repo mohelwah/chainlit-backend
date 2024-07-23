@@ -1,6 +1,8 @@
 import os
 from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
+import tomli
+from dataclasses_json import DataClassJsonMixin
 from pydantic.dataclasses import Field, dataclass
 
 from backend.logger import logger
@@ -157,10 +159,28 @@ class RunSetting:
 
 
 @dataclass()
+class ProjectSettings(DataClassJsonMixin):
+    allow_origins: List[str] = Field(default_factory=lambda: ["*"])
+    enable_telemetry: bool = True
+    # List of environment variables to be provided by each user to use the app. If empty, no environment variables will be asked to the user.
+    user_env: Optional[List[str]] = None
+    # Path to the local langchain cache database
+    lc_cache_path: Optional[str] = None
+    # Path to the local chat db
+    # Duration (in seconds) during which the session is saved when the connection is lost
+    session_timeout: int = 3600
+    # Enable third parties caching (e.g LangChain cache)
+    cache: bool = False
+    # Follow symlink for asset mount (see https://github.com/Chainlit/chainlit/issues/317)
+    follow_symlink: bool = False
+
+
+@dataclass()
 class BackendConfig:
     root: APP_ROOT  # type: ignore
     backend_service: str
     run: RunSetting
+    project: ProjectSettings
 
     def load_translation(self, language: str):
         translation = {}
@@ -180,4 +200,58 @@ def init_config(log=False):
         logger.info(f"Config file already exists at {config_file}")
 
 
-init_config(log=True)
+def load_settings():
+    with open(config_file, "rb") as f:
+        toml_dict = tomli.load(f)
+        # Load project settings
+        project_config = toml_dict.get("project", {})
+        features_settings = toml_dict.get("features", {})
+        ui_settings = toml_dict.get("UI", {})
+        meta = toml_dict.get("meta")
+
+        if not meta or meta.get("generated_by") <= "0.3.0":
+            raise ValueError(
+                "Your config file is outdated. Please delete it and restart the app to regenerate it."
+            )
+
+        lc_cache_path = os.path.join(config_dir, ".langchain.db")
+
+        project_settings = ProjectSettings(
+            lc_cache_path=lc_cache_path,
+            **project_config,
+        )
+
+        return {
+            "project": project_settings,
+        }
+
+
+def reload_config():
+    """Reload the configuration from the config file."""
+    global config
+    if config is None:
+        return
+
+    settings = load_settings()
+
+    config.project = settings["project"]
+
+
+def load_config():
+    """Load the configuration from the config file."""
+    init_config()
+
+    settings = load_settings()
+
+    chainlit_server = os.environ.get("CHAINLIT_SERVER", "https://cloud.chainlit.io")
+
+    config = BackendConfig(
+        chainlit_server=chainlit_server,
+        run=RunSetting(),
+        **settings,
+    )
+
+    return config
+
+
+config = load_config()

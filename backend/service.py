@@ -1,5 +1,8 @@
 from fastapi import APIRouter, FastAPI
 
+from backend.config import config
+
+print(config)
 app = FastAPI()
 
 router = APIRouter()
